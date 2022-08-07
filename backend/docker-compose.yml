@@ -1,0 +1,101 @@
+version: "3.8"
+services:
+  db:
+    container_name: postgresql_db
+    image: postgres
+    restart: always
+    environment:
+      - POSTGRES_PASSWORD=password
+    ports:
+      - 5432:5432
+    volumes:
+      - postgres:/var/lib/postgresql/data
+
+  pgadmin:
+    container_name: pgadmin
+    image: dpage/pgadmin4
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@admin.com
+      - PGADMIN_DEFAULT_PASSWORD=admin
+    ports:
+      - 5050:80
+    depends_on:
+      - db
+    logging:
+      driver: none
+
+  app:
+    container_name: app
+    build:
+      context: ./
+      target: builder
+    command: bash -c "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+    ports:
+      - 8000:8000
+    volumes:
+      - .:/app
+    restart: always
+    environment:
+      - DB_URI=postgresql://postgres:password@db/todo_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+    depends_on:
+      - db
+      - redis
+
+  test-app:
+    container_name: test-app
+    build:
+      context: ./
+      target: dev
+    command: bash -c "alembic upgrade head && pytest"
+    volumes:
+      - .:/app
+    environment:
+      - DB_URI=postgresql://postgres:password@db/test_todo_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+    depends_on:
+      - db
+      - redis
+
+  redis:
+    container_name: redis_todo
+    image: redis
+
+  celery_worker:
+    container_name: celery_worker
+    build:
+      context: ./
+      target: builder
+    command: celery -A celery_worker.celery worker --loglevel=info
+    volumes:
+      - .:/app
+    environment:
+      - DB_URI=postgresql://postgres:password@db/todo_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+    depends_on:
+      - app
+      - redis
+
+  flower:
+    image: mher/flower
+    container_name: flower
+    command: celery -A celery_worker.py flower --port=5555
+    ports:
+      - 5555:5555
+    environment:
+      - DB_URI=postgresql://postgres:password@db/todo_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+    depends_on:
+      - celery_worker
+      - redis
+
+volumes:
+  postgres:
